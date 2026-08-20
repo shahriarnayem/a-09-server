@@ -5,6 +5,7 @@ import {
   connectDatabase,
   getDatabase,
 } from './config/database.js';
+import authRouter from './routes/auth.routes.js';
 
 const app = express();
 
@@ -69,6 +70,8 @@ app.get(
     }
   }
 );
+
+app.use('/api/auth', authRouter);
 
 app.use((request, response) => {
   response.status(404).json({
