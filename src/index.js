@@ -6,6 +6,7 @@ import {
   getDatabase,
 } from './config/database.js';
 import authRouter from './routes/auth.routes.js';
+import tutorRouter from './routes/tutor.routes.js';
 
 const app = express();
 
@@ -72,6 +73,7 @@ app.get(
 );
 
 app.use('/api/auth', authRouter);
+app.use('/api/tutors', tutorRouter);
 
 app.use((request, response) => {
   response.status(404).json({
@@ -103,7 +105,9 @@ const startApplication = async () => {
   console.log('MongoDB connection established.');
 
   server = app.listen(port, () => {
-    console.log(`MediQueue API: http://localhost:${port}`);
+    console.log(
+      `MediQueue API: http://localhost:${port}`
+    );
   });
 };
 
@@ -112,7 +116,9 @@ const shutdownApplication = async (signal) => {
 
   shuttingDown = true;
 
-  console.log(`${signal} received. Closing the application.`);
+  console.log(
+    `${signal} received. Closing the application.`
+  );
 
   try {
     if (server) {
@@ -133,7 +139,11 @@ const shutdownApplication = async (signal) => {
     console.log('Application closed successfully.');
     process.exit(0);
   } catch (error) {
-    console.error('Unable to close cleanly:', error);
+    console.error(
+      'Unable to close cleanly:',
+      error
+    );
+
     process.exit(1);
   }
 };
