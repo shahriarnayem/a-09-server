@@ -1,8 +1,10 @@
 import cors from 'cors';
-import dotenv from 'dotenv';
 import express from 'express';
-
-dotenv.config();
+import {
+  closeDatabase,
+  connectDatabase,
+  getDatabase,
+} from './config/database.js';
 
 const app = express();
 
@@ -50,13 +52,23 @@ app.get('/', (request, response) => {
   });
 });
 
-app.get('/health', (request, response) => {
-  response.status(200).json({
-    success: true,
-    status: 'available',
-    time: new Date().toISOString(),
-  });
-});
+app.get(
+  '/health',
+  async (request, response, next) => {
+    try {
+      await getDatabase().command({ ping: 1 });
+
+      response.status(200).json({
+        success: true,
+        status: 'available',
+        database: 'connected',
+        time: new Date().toISOString(),
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 app.use((request, response) => {
   response.status(404).json({
@@ -79,19 +91,65 @@ app.use((error, request, response, next) => {
   });
 });
 
-const server = app.listen(port, () => {
-  console.log(`MediQueue API: http://localhost:${port}`);
-});
+let server = null;
+let shuttingDown = false;
 
-const shutdownServer = (signal) => {
-  console.log(`${signal} received. Closing the application.`);
+const startApplication = async () => {
+  await connectDatabase();
 
-  server.close(() => {
-    process.exit(0);
+  console.log('MongoDB connection established.');
+
+  server = app.listen(port, () => {
+    console.log(`MediQueue API: http://localhost:${port}`);
   });
 };
 
-process.on('SIGINT', () => shutdownServer('SIGINT'));
-process.on('SIGTERM', () => shutdownServer('SIGTERM'));
+const shutdownApplication = async (signal) => {
+  if (shuttingDown) return;
+
+  shuttingDown = true;
+
+  console.log(`${signal} received. Closing the application.`);
+
+  try {
+    if (server) {
+      await new Promise((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+    }
+
+    await closeDatabase();
+
+    console.log('Application closed successfully.');
+    process.exit(0);
+  } catch (error) {
+    console.error('Unable to close cleanly:', error);
+    process.exit(1);
+  }
+};
+
+startApplication().catch((error) => {
+  console.error(
+    'Unable to start the application:',
+    error
+  );
+
+  process.exit(1);
+});
+
+process.on('SIGINT', () =>
+  shutdownApplication('SIGINT')
+);
+
+process.on('SIGTERM', () =>
+  shutdownApplication('SIGTERM')
+);
 
 export default app;
