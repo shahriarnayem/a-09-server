@@ -6,6 +6,7 @@ import {
   getDatabase,
 } from './config/database.js';
 import authRouter from './routes/auth.routes.js';
+import bookingRoutes from './routes/booking.routes.js';
 import tutorRouter from './routes/tutor.routes.js';
 
 const app = express();
@@ -74,6 +75,7 @@ app.get(
 
 app.use('/api/auth', authRouter);
 app.use('/api/tutors', tutorRouter);
+app.use('/api/bookings', bookingRoutes);
 
 app.use((request, response) => {
   response.status(404).json({
