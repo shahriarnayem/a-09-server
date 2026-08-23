@@ -8,342 +8,596 @@ const router = Router();
 const getTutorsCollection = () =>
   getDatabase().collection('tutors');
 
-const escapeRegex = (value) =>
+const textValue = (value) =>
+  typeof value === 'string' ? value.trim() : '';
+
+const hasAnyField = (object, fields) =>
+  fields.some((field) =>
+    Object.prototype.hasOwnProperty.call(
+      object,
+      field
+    )
+  );
+
+const getFirstValue = (object, fields) => {
+  for (const field of fields) {
+    if (
+      Object.prototype.hasOwnProperty.call(
+        object,
+        field
+      )
+    ) {
+      return object[field];
+    }
+  }
+
+  return undefined;
+};
+
+const escapeRegularExpression = (value) =>
   value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-const validateObjectId = (id) =>
-  ObjectId.isValid(id);
+const isValidDate = (dateValue) => {
+  if (!dateValue) return false;
 
-router.post('/', verifyToken, async (request, response) => {
-  try {
-    const {
+  const date = new Date(`${dateValue}T00:00:00`);
+
+  return !Number.isNaN(date.getTime());
+};
+
+const validTeachingModes = [
+  'Online',
+  'Offline',
+  'Both',
+];
+
+const buildTutorFromRequest = (requestBody) => {
+  const name = textValue(requestBody.name);
+  const image = textValue(requestBody.image);
+
+  const subject = textValue(
+    requestBody.subject ||
+      requestBody.category ||
+      requestBody.language
+  );
+
+  const availableDays = textValue(
+    requestBody.availableDays
+  );
+
+  const availableTimeSlot = textValue(
+    requestBody.availableTimeSlot ||
+      requestBody.availableTime
+  );
+
+  const hourlyFee = Number(
+    requestBody.hourlyFee ??
+      requestBody.price
+  );
+
+  const totalSlot = Number(
+    requestBody.totalSlot ??
+      requestBody.availableSlots
+  );
+
+  const sessionStartDate = textValue(
+    requestBody.sessionStartDate
+  );
+
+  const institutionExperience = textValue(
+    requestBody.institutionExperience ||
+      requestBody.description
+  );
+
+  const location = textValue(
+    requestBody.location
+  );
+
+  const teachingMode = textValue(
+    requestBody.teachingMode
+  );
+
+  const review =
+    requestBody.review === undefined
+      ? 0
+      : Number(requestBody.review);
+
+  const errors = [];
+
+  if (!name) {
+    errors.push('Tutor name is required.');
+  }
+
+  if (!image) {
+    errors.push('Tutor photo is required.');
+  }
+
+  if (!subject) {
+    errors.push(
+      'Please select a subject or category.'
+    );
+  }
+
+  if (!availableDays) {
+    errors.push('Available days are required.');
+  }
+
+  if (!availableTimeSlot) {
+    errors.push(
+      'Available time slot is required.'
+    );
+  }
+
+  if (
+    !Number.isFinite(hourlyFee) ||
+    hourlyFee <= 0
+  ) {
+    errors.push(
+      'Please enter a valid hourly fee.'
+    );
+  }
+
+  if (
+    !Number.isInteger(totalSlot) ||
+    totalSlot < 0
+  ) {
+    errors.push(
+      'Total slots must be a whole number.'
+    );
+  }
+
+  if (!isValidDate(sessionStartDate)) {
+    errors.push(
+      'Please select a valid session start date.'
+    );
+  }
+
+  if (!institutionExperience) {
+    errors.push(
+      'Institution and experience information is required.'
+    );
+  }
+
+  if (!location) {
+    errors.push('Location is required.');
+  }
+
+  if (
+    !validTeachingModes.includes(
+      teachingMode
+    )
+  ) {
+    errors.push(
+      'Please select a valid teaching mode.'
+    );
+  }
+
+  if (
+    !Number.isFinite(review) ||
+    review < 0 ||
+    review > 5
+  ) {
+    errors.push(
+      'The rating must be between 0 and 5.'
+    );
+  }
+
+  return {
+    errors,
+    tutor: {
       name,
       image,
-      language,
-      price,
+
+      subject,
+      category: subject,
+      language: subject,
+
+      availableDays,
+      availableTimeSlot,
+
+      hourlyFee,
+      price: hourlyFee,
+
+      totalSlot,
+      availableSlots: totalSlot,
+
+      sessionStartDate,
+
+      institutionExperience,
+      description: institutionExperience,
+
+      location,
+      teachingMode,
       review,
-      description,
-      availableSlots,
-    } = request.body;
+    },
+  };
+};
 
-    if (
-      !name?.trim() ||
-      !image?.trim() ||
-      !language?.trim() ||
-      !description?.trim()
-    ) {
-      return response.status(400).json({
-        success: false,
-        message: 'Please complete all tutor information.',
-      });
+const buildTutorUpdates = (requestBody) => {
+  const updates = {};
+  const errors = [];
+
+  if (
+    Object.prototype.hasOwnProperty.call(
+      requestBody,
+      'name'
+    )
+  ) {
+    const name = textValue(requestBody.name);
+
+    if (!name) {
+      errors.push('Tutor name is required.');
+    } else {
+      updates.name = name;
     }
-
-    const numericPrice = Number(price);
-    const numericReview = Number(review);
-    const numericSlots = Number(availableSlots);
-
-    if (
-      !Number.isFinite(numericPrice) ||
-      numericPrice <= 0
-    ) {
-      return response.status(400).json({
-        success: false,
-        message: 'Please provide a valid session price.',
-      });
-    }
-
-    if (
-      !Number.isFinite(numericReview) ||
-      numericReview < 0 ||
-      numericReview > 5
-    ) {
-      return response.status(400).json({
-        success: false,
-        message: 'The rating must be between 0 and 5.',
-      });
-    }
-
-    if (
-      !Number.isInteger(numericSlots) ||
-      numericSlots < 0
-    ) {
-      return response.status(400).json({
-        success: false,
-        message:
-          'Available sessions must be a whole number.',
-      });
-    }
-
-    const currentTime = new Date();
-
-    const tutor = {
-      name: name.trim(),
-      image: image.trim(),
-      language: language.trim(),
-      price: numericPrice,
-      review: numericReview,
-      description: description.trim(),
-      availableSlots: numericSlots,
-      email: request.auth.email,
-      ownerUid: request.auth.uid,
-      createdAt: currentTime,
-      updatedAt: currentTime,
-    };
-
-    const result =
-      await getTutorsCollection().insertOne(tutor);
-
-    return response.status(201).json({
-      success: true,
-      message:
-        'The tutor profile has been added successfully.',
-      tutor: {
-        _id: result.insertedId,
-        ...tutor,
-      },
-    });
-  } catch (error) {
-    console.error('Unable to add tutor:', error);
-
-    return response.status(500).json({
-      success: false,
-      message:
-        'The tutor profile could not be added.',
-    });
   }
-});
+
+  if (
+    Object.prototype.hasOwnProperty.call(
+      requestBody,
+      'image'
+    )
+  ) {
+    const image = textValue(requestBody.image);
+
+    if (!image) {
+      errors.push('Tutor photo is required.');
+    } else {
+      updates.image = image;
+    }
+  }
+
+  if (
+    hasAnyField(requestBody, [
+      'subject',
+      'category',
+      'language',
+    ])
+  ) {
+    const subject = textValue(
+      getFirstValue(requestBody, [
+        'subject',
+        'category',
+        'language',
+      ])
+    );
+
+    if (!subject) {
+      errors.push(
+        'Please select a subject or category.'
+      );
+    } else {
+      updates.subject = subject;
+      updates.category = subject;
+      updates.language = subject;
+    }
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(
+      requestBody,
+      'availableDays'
+    )
+  ) {
+    const availableDays = textValue(
+      requestBody.availableDays
+    );
+
+    if (!availableDays) {
+      errors.push(
+        'Available days are required.'
+      );
+    } else {
+      updates.availableDays = availableDays;
+    }
+  }
+
+  if (
+    hasAnyField(requestBody, [
+      'availableTimeSlot',
+      'availableTime',
+    ])
+  ) {
+    const availableTimeSlot = textValue(
+      getFirstValue(requestBody, [
+        'availableTimeSlot',
+        'availableTime',
+      ])
+    );
+
+    if (!availableTimeSlot) {
+      errors.push(
+        'Available time slot is required.'
+      );
+    } else {
+      updates.availableTimeSlot =
+        availableTimeSlot;
+    }
+  }
+
+  if (
+    hasAnyField(requestBody, [
+      'hourlyFee',
+      'price',
+    ])
+  ) {
+    const hourlyFee = Number(
+      getFirstValue(requestBody, [
+        'hourlyFee',
+        'price',
+      ])
+    );
+
+    if (
+      !Number.isFinite(hourlyFee) ||
+      hourlyFee <= 0
+    ) {
+      errors.push(
+        'Please enter a valid hourly fee.'
+      );
+    } else {
+      updates.hourlyFee = hourlyFee;
+      updates.price = hourlyFee;
+    }
+  }
+
+  if (
+    hasAnyField(requestBody, [
+      'totalSlot',
+      'availableSlots',
+    ])
+  ) {
+    const totalSlot = Number(
+      getFirstValue(requestBody, [
+        'totalSlot',
+        'availableSlots',
+      ])
+    );
+
+    if (
+      !Number.isInteger(totalSlot) ||
+      totalSlot < 0
+    ) {
+      errors.push(
+        'Total slots must be a whole number.'
+      );
+    } else {
+      updates.totalSlot = totalSlot;
+      updates.availableSlots = totalSlot;
+    }
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(
+      requestBody,
+      'sessionStartDate'
+    )
+  ) {
+    const sessionStartDate = textValue(
+      requestBody.sessionStartDate
+    );
+
+    if (!isValidDate(sessionStartDate)) {
+      errors.push(
+        'Please select a valid session start date.'
+      );
+    } else {
+      updates.sessionStartDate =
+        sessionStartDate;
+    }
+  }
+
+  if (
+    hasAnyField(requestBody, [
+      'institutionExperience',
+      'description',
+    ])
+  ) {
+    const institutionExperience = textValue(
+      getFirstValue(requestBody, [
+        'institutionExperience',
+        'description',
+      ])
+    );
+
+    if (!institutionExperience) {
+      errors.push(
+        'Institution and experience information is required.'
+      );
+    } else {
+      updates.institutionExperience =
+        institutionExperience;
+      updates.description =
+        institutionExperience;
+    }
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(
+      requestBody,
+      'location'
+    )
+  ) {
+    const location = textValue(
+      requestBody.location
+    );
+
+    if (!location) {
+      errors.push('Location is required.');
+    } else {
+      updates.location = location;
+    }
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(
+      requestBody,
+      'teachingMode'
+    )
+  ) {
+    const teachingMode = textValue(
+      requestBody.teachingMode
+    );
+
+    if (
+      !validTeachingModes.includes(
+        teachingMode
+      )
+    ) {
+      errors.push(
+        'Please select a valid teaching mode.'
+      );
+    } else {
+      updates.teachingMode = teachingMode;
+    }
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(
+      requestBody,
+      'review'
+    )
+  ) {
+    const review = Number(requestBody.review);
+
+    if (
+      !Number.isFinite(review) ||
+      review < 0 ||
+      review > 5
+    ) {
+      errors.push(
+        'The rating must be between 0 and 5.'
+      );
+    } else {
+      updates.review = review;
+    }
+  }
+
+  return {
+    errors,
+    updates,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get all tutors
+|--------------------------------------------------------------------------
+*/
 
 router.get('/', async (request, response) => {
   try {
-    const {
-      search,
-      language,
-      minPrice,
-      maxPrice,
-      minReview,
-      availableOnly,
-      fromDate,
-      toDate,
-      sort = 'latest',
-      limit,
-    } = request.query;
-
-    const query = {};
-
-    if (search?.trim()) {
-      query.name = {
-        $regex: escapeRegex(search.trim()),
-        $options: 'i',
-      };
-    }
-
-    if (language?.trim()) {
-      query.language = {
-        $regex: `^${escapeRegex(
-          language.trim()
-        )}$`,
-        $options: 'i',
-      };
-    }
-
-    if (
-      minPrice !== undefined ||
-      maxPrice !== undefined
-    ) {
-      query.price = {};
-
-      if (minPrice !== undefined) {
-        const numericMinPrice = Number(minPrice);
-
-        if (
-          !Number.isFinite(numericMinPrice) ||
-          numericMinPrice < 0
-        ) {
-          return response.status(400).json({
-            success: false,
-            message:
-              'Minimum price must be a valid number.',
-          });
-        }
-
-        query.price.$gte = numericMinPrice;
-      }
-
-      if (maxPrice !== undefined) {
-        const numericMaxPrice = Number(maxPrice);
-
-        if (
-          !Number.isFinite(numericMaxPrice) ||
-          numericMaxPrice < 0
-        ) {
-          return response.status(400).json({
-            success: false,
-            message:
-              'Maximum price must be a valid number.',
-          });
-        }
-
-        query.price.$lte = numericMaxPrice;
-      }
-
-      if (
-        query.price.$gte !== undefined &&
-        query.price.$lte !== undefined &&
-        query.price.$gte > query.price.$lte
-      ) {
-        return response.status(400).json({
-          success: false,
-          message:
-            'Minimum price cannot be greater than maximum price.',
-        });
-      }
-    }
-
-    if (minReview !== undefined) {
-      const numericMinReview = Number(minReview);
-
-      if (
-        !Number.isFinite(numericMinReview) ||
-        numericMinReview < 0 ||
-        numericMinReview > 5
-      ) {
-        return response.status(400).json({
-          success: false,
-          message:
-            'Minimum rating must be between 0 and 5.',
-        });
-      }
-
-      query.review = {
-        $gte: numericMinReview,
-      };
-    }
-
-    if (availableOnly === 'true') {
-      query.availableSlots = {
-        $gt: 0,
-      };
-    }
-
-    if (fromDate || toDate) {
-      query.createdAt = {};
-
-      if (fromDate) {
-        const startDate = new Date(
-          `${fromDate}T00:00:00.000Z`
-        );
-
-        if (Number.isNaN(startDate.getTime())) {
-          return response.status(400).json({
-            success: false,
-            message:
-              'Please provide a valid starting date.',
-          });
-        }
-
-        query.createdAt.$gte = startDate;
-      }
-
-      if (toDate) {
-        const endDate = new Date(
-          `${toDate}T23:59:59.999Z`
-        );
-
-        if (Number.isNaN(endDate.getTime())) {
-          return response.status(400).json({
-            success: false,
-            message:
-              'Please provide a valid ending date.',
-          });
-        }
-
-        query.createdAt.$lte = endDate;
-      }
-
-      if (
-        query.createdAt.$gte &&
-        query.createdAt.$lte &&
-        query.createdAt.$gte >
-          query.createdAt.$lte
-      ) {
-        return response.status(400).json({
-          success: false,
-          message:
-            'Starting date cannot be after ending date.',
-        });
-      }
-    }
-
-    const sortingOptions = {
-      latest: {
-        createdAt: -1,
-      },
-      oldest: {
-        createdAt: 1,
-      },
-      'price-low': {
-        price: 1,
-      },
-      'price-high': {
-        price: -1,
-      },
-      'rating-high': {
-        review: -1,
-      },
-    };
-
-    const selectedSort =
-      sortingOptions[sort] || sortingOptions.latest;
-
-    let selectedLimit = null;
-
-    if (limit !== undefined) {
-      const numericLimit = Number.parseInt(limit, 10);
-
-      if (
-        !Number.isInteger(numericLimit) ||
-        numericLimit < 1
-      ) {
-        return response.status(400).json({
-          success: false,
-          message:
-            'The result limit must be a positive number.',
-        });
-      }
-
-      selectedLimit = Math.min(numericLimit, 50);
-    }
-
     const tutorsCollection =
       getTutorsCollection();
 
-    const total =
-      await tutorsCollection.countDocuments(query);
+    const search = textValue(
+      request.query.search
+    );
 
-    let tutorsCursor = tutorsCollection
-      .find(query)
-      .sort(selectedSort);
+    const startDate = textValue(
+      request.query.startDate
+    );
 
-    if (selectedLimit) {
-      tutorsCursor =
-        tutorsCursor.limit(selectedLimit);
+    const endDate = textValue(
+      request.query.endDate
+    );
+
+    const sort =
+      request.query.sort === 'oldest'
+        ? 'oldest'
+        : 'latest';
+
+    const requestedLimit = Number.parseInt(
+      request.query.limit,
+      10
+    );
+
+    const limit =
+      Number.isInteger(requestedLimit) &&
+      requestedLimit > 0
+        ? Math.min(requestedLimit, 50)
+        : null;
+
+    const filter = {};
+
+    if (search) {
+      filter.name = {
+        $regex: escapeRegularExpression(search),
+        $options: 'i',
+      };
     }
 
-    const tutors = await tutorsCursor.toArray();
+    if (startDate || endDate) {
+      filter.createdAt = {};
+
+      if (startDate) {
+        const parsedStartDate = new Date(
+          `${startDate}T00:00:00`
+        );
+
+        if (
+          !Number.isNaN(
+            parsedStartDate.getTime()
+          )
+        ) {
+          filter.createdAt.$gte =
+            parsedStartDate;
+        }
+      }
+
+      if (endDate) {
+        const parsedEndDate = new Date(
+          `${endDate}T23:59:59.999`
+        );
+
+        if (
+          !Number.isNaN(
+            parsedEndDate.getTime()
+          )
+        ) {
+          filter.createdAt.$lte =
+            parsedEndDate;
+        }
+      }
+
+      if (
+        Object.keys(filter.createdAt).length ===
+        0
+      ) {
+        delete filter.createdAt;
+      }
+    }
+
+    const total =
+      await tutorsCollection.countDocuments(
+        filter
+      );
+
+    let tutorQuery = tutorsCollection
+      .find(filter)
+      .sort({
+        createdAt: sort === 'oldest' ? 1 : -1,
+      });
+
+    if (limit) {
+      tutorQuery = tutorQuery.limit(limit);
+    }
+
+    const tutors = await tutorQuery.toArray();
 
     return response.status(200).json({
       success: true,
       total,
       count: tutors.length,
-      limit: selectedLimit,
-      sort:
-        sortingOptions[sort] !== undefined
-          ? sort
-          : 'latest',
+      limit,
+      sort,
       tutors,
     });
   } catch (error) {
-    console.error('Unable to load tutors:', error);
+    console.error(
+      'Unable to load tutors:',
+      error
+    );
 
     return response.status(500).json({
       success: false,
@@ -353,65 +607,150 @@ router.get('/', async (request, response) => {
   }
 });
 
-router.get('/:id', async (request, response) => {
-  try {
+/*
+|--------------------------------------------------------------------------
+| Get one tutor
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  '/:id',
+  async (request, response) => {
     const { id } = request.params;
 
-    if (!validateObjectId(id)) {
+    if (!ObjectId.isValid(id)) {
       return response.status(400).json({
         success: false,
-        message: 'The tutor ID is not valid.',
+        message:
+          'The selected tutor is not valid.',
       });
     }
 
-    const tutor =
-      await getTutorsCollection().findOne({
-        _id: new ObjectId(id),
-      });
+    try {
+      const tutor =
+        await getTutorsCollection().findOne({
+          _id: new ObjectId(id),
+        });
 
-    if (!tutor) {
-      return response.status(404).json({
+      if (!tutor) {
+        return response.status(404).json({
+          success: false,
+          message:
+            'The tutor profile was not found.',
+        });
+      }
+
+      return response.status(200).json({
+        success: true,
+        tutor,
+      });
+    } catch (error) {
+      console.error(
+        'Unable to load tutor:',
+        error
+      );
+
+      return response.status(500).json({
         success: false,
-        message: 'The tutor profile was not found.',
+        message:
+          'The tutor profile could not be loaded.',
+      });
+    }
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| Create tutor
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  '/',
+  verifyToken,
+  async (request, response) => {
+    const { errors, tutor } =
+      buildTutorFromRequest(
+        request.body || {}
+      );
+
+    if (errors.length > 0) {
+      return response.status(400).json({
+        success: false,
+        message: errors[0],
+        errors,
       });
     }
 
-    return response.status(200).json({
-      success: true,
-      tutor,
-    });
-  } catch (error) {
-    console.error('Unable to load tutor:', error);
+    try {
+      const currentTime = new Date();
 
-    return response.status(500).json({
-      success: false,
-      message:
-        'The tutor profile could not be loaded.',
-    });
+      const newTutor = {
+        ...tutor,
+        email: request.auth.email,
+        ownerUid: request.auth.uid,
+        createdAt: currentTime,
+        updatedAt: currentTime,
+      };
+
+      const result =
+        await getTutorsCollection().insertOne(
+          newTutor
+        );
+
+      return response.status(201).json({
+        success: true,
+        message:
+          'The tutor profile has been added successfully.',
+        tutor: {
+          _id: result.insertedId,
+          ...newTutor,
+        },
+      });
+    } catch (error) {
+      console.error(
+        'Unable to create tutor:',
+        error
+      );
+
+      return response.status(500).json({
+        success: false,
+        message:
+          'The tutor profile could not be added.',
+      });
+    }
   }
-});
+);
+
+/*
+|--------------------------------------------------------------------------
+| Update owned tutor
+|--------------------------------------------------------------------------
+*/
 
 router.patch(
   '/:id',
   verifyToken,
   async (request, response) => {
+    const { id } = request.params;
+
+    if (!ObjectId.isValid(id)) {
+      return response.status(400).json({
+        success: false,
+        message:
+          'The selected tutor is not valid.',
+      });
+    }
+
+    const tutorObjectId = new ObjectId(id);
+
     try {
-      const { id } = request.params;
-
-      if (!validateObjectId(id)) {
-        return response.status(400).json({
-          success: false,
-          message: 'The tutor ID is not valid.',
-        });
-      }
-
-      const tutorId = new ObjectId(id);
       const tutorsCollection =
         getTutorsCollection();
 
       const existingTutor =
         await tutorsCollection.findOne({
-          _id: tutorId,
+          _id: tutorObjectId,
         });
 
       if (!existingTutor) {
@@ -429,134 +768,49 @@ router.patch(
         return response.status(403).json({
           success: false,
           message:
-            'You cannot update this tutor profile.',
+            'You can only update your own tutor profiles.',
         });
       }
 
-      const updateData = {};
-      const body = request.body || {};
-
-      const stringFields = [
-        'name',
-        'image',
-        'language',
-        'description',
-      ];
-
-      for (const field of stringFields) {
-        if (
-          Object.prototype.hasOwnProperty.call(
-            body,
-            field
-          )
-        ) {
-          if (
-            typeof body[field] !== 'string' ||
-            !body[field].trim()
-          ) {
-            return response.status(400).json({
-              success: false,
-              message: `${field} cannot be empty.`,
-            });
-          }
-
-          updateData[field] = body[field].trim();
-        }
-      }
-
-      if (
-        Object.prototype.hasOwnProperty.call(
-          body,
-          'price'
-        )
-      ) {
-        const numericPrice = Number(body.price);
-
-        if (
-          !Number.isFinite(numericPrice) ||
-          numericPrice <= 0
-        ) {
-          return response.status(400).json({
-            success: false,
-            message:
-              'Please provide a valid session price.',
-          });
-        }
-
-        updateData.price = numericPrice;
-      }
-
-      if (
-        Object.prototype.hasOwnProperty.call(
-          body,
-          'review'
-        )
-      ) {
-        const numericReview = Number(body.review);
-
-        if (
-          !Number.isFinite(numericReview) ||
-          numericReview < 0 ||
-          numericReview > 5
-        ) {
-          return response.status(400).json({
-            success: false,
-            message:
-              'The rating must be between 0 and 5.',
-          });
-        }
-
-        updateData.review = numericReview;
-      }
-
-      if (
-        Object.prototype.hasOwnProperty.call(
-          body,
-          'availableSlots'
-        )
-      ) {
-        const numericSlots = Number(
-          body.availableSlots
+      const { errors, updates } =
+        buildTutorUpdates(
+          request.body || {}
         );
 
-        if (
-          !Number.isInteger(numericSlots) ||
-          numericSlots < 0
-        ) {
-          return response.status(400).json({
-            success: false,
-            message:
-              'Available sessions must be a whole number.',
-          });
-        }
-
-        updateData.availableSlots =
-          numericSlots;
+      if (errors.length > 0) {
+        return response.status(400).json({
+          success: false,
+          message: errors[0],
+          errors,
+        });
       }
 
-      if (Object.keys(updateData).length === 0) {
+      if (Object.keys(updates).length === 0) {
         return response.status(400).json({
           success: false,
           message:
-            'Please provide at least one field to update.',
+            'Please provide information to update.',
         });
       }
 
-      updateData.updatedAt = new Date();
+      const updatedAt = new Date();
 
       await tutorsCollection.updateOne(
         {
-          _id: tutorId,
+          _id: tutorObjectId,
           ownerUid: request.auth.uid,
         },
         {
-          $set: updateData,
+          $set: {
+            ...updates,
+            updatedAt,
+          },
         }
       );
 
       const updatedTutor =
         await tutorsCollection.findOne({
-          _id: tutorId,
+          _id: tutorObjectId,
         });
 
       return response.status(200).json({
@@ -566,7 +820,10 @@ router.patch(
         tutor: updatedTutor,
       });
     } catch (error) {
-      console.error('Unable to update tutor:', error);
+      console.error(
+        'Unable to update tutor:',
+        error
+      );
 
       return response.status(500).json({
         success: false,
@@ -577,27 +834,35 @@ router.patch(
   }
 );
 
+/*
+|--------------------------------------------------------------------------
+| Delete owned tutor
+|--------------------------------------------------------------------------
+*/
+
 router.delete(
   '/:id',
   verifyToken,
   async (request, response) => {
+    const { id } = request.params;
+
+    if (!ObjectId.isValid(id)) {
+      return response.status(400).json({
+        success: false,
+        message:
+          'The selected tutor is not valid.',
+      });
+    }
+
+    const tutorObjectId = new ObjectId(id);
+
     try {
-      const { id } = request.params;
-
-      if (!validateObjectId(id)) {
-        return response.status(400).json({
-          success: false,
-          message: 'The tutor ID is not valid.',
-        });
-      }
-
-      const tutorId = new ObjectId(id);
       const tutorsCollection =
         getTutorsCollection();
 
       const existingTutor =
         await tutorsCollection.findOne({
-          _id: tutorId,
+          _id: tutorObjectId,
         });
 
       if (!existingTutor) {
@@ -615,12 +880,12 @@ router.delete(
         return response.status(403).json({
           success: false,
           message:
-            'You cannot delete this tutor profile.',
+            'You can only delete your own tutor profiles.',
         });
       }
 
       await tutorsCollection.deleteOne({
-        _id: tutorId,
+        _id: tutorObjectId,
         ownerUid: request.auth.uid,
       });
 
@@ -628,10 +893,12 @@ router.delete(
         success: true,
         message:
           'The tutor profile has been deleted successfully.',
-        tutor: existingTutor,
       });
     } catch (error) {
-      console.error('Unable to delete tutor:', error);
+      console.error(
+        'Unable to delete tutor:',
+        error
+      );
 
       return response.status(500).json({
         success: false,
