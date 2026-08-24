@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 import cors from 'cors';
 import express from 'express';
 import {
@@ -12,6 +14,7 @@ import tutorRouter from './routes/tutor.routes.js';
 const app = express();
 
 const port = Number(process.env.PORT) || 5000;
+const isVercel = Boolean(process.env.VERCEL);
 
 const allowedOrigins = (
   process.env.CLIENT_URL || 'http://localhost:5173'
@@ -48,6 +51,22 @@ app.use(
   })
 );
 
+app.use(async (request, response, next) => {
+  try {
+    await connectDatabase();
+    next();
+  } catch (error) {
+    const databaseError = new Error(
+      'The database is temporarily unavailable. Please try again.'
+    );
+
+    databaseError.status = 503;
+    databaseError.cause = error;
+
+    next(databaseError);
+  }
+});
+
 app.get('/', (request, response) => {
   response.status(200).json({
     success: true,
@@ -80,23 +99,32 @@ app.use('/api/bookings', bookingRoutes);
 app.use((request, response) => {
   response.status(404).json({
     success: false,
-    message: 'The requested resource was not found.',
-  });
-});
-
-app.use((error, request, response, next) => {
-  console.error(error);
-
-  const statusCode = error.status || 500;
-
-  response.status(statusCode).json({
-    success: false,
     message:
-      process.env.NODE_ENV === 'production'
-        ? 'Something went wrong. Please try again.'
-        : error.message,
+      'The requested resource was not found.',
   });
 });
+
+app.use(
+  (error, request, response, next) => {
+    console.error(error);
+
+    if (response.headersSent) {
+      next(error);
+      return;
+    }
+
+    const statusCode = error.status || 500;
+
+    response.status(statusCode).json({
+      success: false,
+      message:
+        process.env.NODE_ENV === 'production' &&
+        statusCode !== 503
+          ? 'Something went wrong. Please try again.'
+          : error.message,
+    });
+  }
+);
 
 let server = null;
 let shuttingDown = false;
@@ -138,7 +166,10 @@ const shutdownApplication = async (signal) => {
 
     await closeDatabase();
 
-    console.log('Application closed successfully.');
+    console.log(
+      'Application closed successfully.'
+    );
+
     process.exit(0);
   } catch (error) {
     console.error(
@@ -150,21 +181,23 @@ const shutdownApplication = async (signal) => {
   }
 };
 
-startApplication().catch((error) => {
-  console.error(
-    'Unable to start the application:',
-    error
+if (!isVercel) {
+  startApplication().catch((error) => {
+    console.error(
+      'Unable to start the application:',
+      error
+    );
+
+    process.exit(1);
+  });
+
+  process.on('SIGINT', () =>
+    shutdownApplication('SIGINT')
   );
 
-  process.exit(1);
-});
-
-process.on('SIGINT', () =>
-  shutdownApplication('SIGINT')
-);
-
-process.on('SIGTERM', () =>
-  shutdownApplication('SIGTERM')
-);
+  process.on('SIGTERM', () =>
+    shutdownApplication('SIGTERM')
+  );
+}
 
 export default app;

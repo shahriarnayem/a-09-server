@@ -1,110 +1,141 @@
-import 'dotenv/config';
-import {
-  MongoClient,
-  ServerApiVersion,
-} from 'mongodb';
+import { MongoClient } from 'mongodb';
 
-const mongoUri = process.env.MONGODB_URI;
-const databaseName =
-  process.env.MONGODB_DB_NAME || 'mediqueue';
+const mongoStateKey = '__mediqueueMongoState';
 
-if (!mongoUri) {
-  throw new Error(
-    'MONGODB_URI is missing from the environment variables.'
-  );
-}
+const mongoState = globalThis[mongoStateKey] || {
+  client: null,
+  database: null,
+  connectionPromise: null,
+};
 
-const mongoClient = new MongoClient(mongoUri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  },
-});
+globalThis[mongoStateKey] = mongoState;
 
-let database = null;
-let connectionPromise = null;
+const wait = (milliseconds) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
 
-const requiredCollectionNames = [
-  'tutors',
-  'bookings',
-];
+const getMongoConfiguration = () => {
+  const uri = process.env.MONGODB_URI?.trim();
 
-const createRequiredCollections = async (
-  connectedDatabase
-) => {
-  const existingCollections =
-    await connectedDatabase
-      .listCollections({}, { nameOnly: true })
-      .toArray();
+  const databaseName =
+    process.env.MONGODB_DB_NAME?.trim() ||
+    'mediqueue';
 
-  const existingCollectionNames = new Set(
-    existingCollections.map(
-      (collection) => collection.name
-    )
-  );
+  if (!uri) {
+    throw new Error(
+      'MONGODB_URI is missing from the environment variables.'
+    );
+  }
 
-  for (const collectionName of requiredCollectionNames) {
-    if (!existingCollectionNames.has(collectionName)) {
-      await connectedDatabase.createCollection(
-        collectionName
-      );
+  return {
+    uri,
+    databaseName,
+  };
+};
+
+const createMongoClient = (uri) =>
+  new MongoClient(uri, {
+    maxPoolSize: 10,
+    minPoolSize: 0,
+    maxConnecting: 2,
+    maxIdleTimeMS: 30000,
+    waitQueueTimeoutMS: 12000,
+    serverSelectionTimeoutMS: 12000,
+    connectTimeoutMS: 12000,
+    socketTimeoutMS: 45000,
+    retryReads: true,
+    retryWrites: true,
+  });
+
+const openDatabaseConnection = async () => {
+  const { uri, databaseName } =
+    getMongoConfiguration();
+
+  let lastConnectionError = null;
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const client = createMongoClient(uri);
+
+    try {
+      await client.connect();
+
+      const database = client.db(databaseName);
+
+      await database.command({ ping: 1 });
+
+      return {
+        client,
+        database,
+      };
+    } catch (error) {
+      lastConnectionError = error;
+
+      await client.close().catch(() => {});
+
+      if (attempt < 2) {
+        await wait(400);
+      }
     }
   }
+
+  throw lastConnectionError;
 };
 
-const establishDatabaseConnection = async () => {
-  await mongoClient.connect();
-
-  await mongoClient
-    .db('admin')
-    .command({ ping: 1 });
-
-  database = mongoClient.db(databaseName);
-
-  await createRequiredCollections(database);
-
-  return database;
-};
-
-export const connectDatabase = async () => {
-  if (database) {
-    return database;
+const connectDatabase = async () => {
+  if (mongoState.client && mongoState.database) {
+    return mongoState.database;
   }
 
-  if (!connectionPromise) {
-    connectionPromise =
-      establishDatabaseConnection().catch((error) => {
-        connectionPromise = null;
-        throw error;
-      });
+  if (!mongoState.connectionPromise) {
+    mongoState.connectionPromise =
+      openDatabaseConnection()
+        .then(({ client, database }) => {
+          mongoState.client = client;
+          mongoState.database = database;
+
+          return database;
+        })
+        .catch((error) => {
+          mongoState.client = null;
+          mongoState.database = null;
+
+          throw error;
+        })
+        .finally(() => {
+          mongoState.connectionPromise = null;
+        });
   }
 
-  return connectionPromise;
+  return mongoState.connectionPromise;
 };
 
-export const getDatabase = () => {
-  if (!database) {
+const getDatabase = () => {
+  if (!mongoState.database) {
     throw new Error(
       'The database connection has not been established.'
     );
   }
 
-  return database;
+  return mongoState.database;
 };
 
-export const getCollections = () => {
-  const connectedDatabase = getDatabase();
+const closeDatabase = async () => {
+  if (mongoState.connectionPromise) {
+    await mongoState.connectionPromise.catch(() => {});
+  }
 
-  return {
-    tutors: connectedDatabase.collection('tutors'),
-    bookings: connectedDatabase.collection('bookings'),
-  };
+  if (mongoState.client) {
+    await mongoState.client.close();
+  }
+
+  mongoState.client = null;
+  mongoState.database = null;
+  mongoState.connectionPromise = null;
 };
 
-export const closeDatabase = async () => {
-  await mongoClient.close();
-
-  database = null;
-  connectionPromise = null;
+export {
+  closeDatabase,
+  connectDatabase,
+  getDatabase,
 };
